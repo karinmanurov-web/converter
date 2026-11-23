@@ -147,7 +147,7 @@
                     // Blob-worker не может разрешать относительные импорты от blob: URL.
                     // Перенаправляем их на оригинальные ESM-файлы пакета.
                     workerSource = workerSource.replace(
-                        /from\\s+(['"])\\.\\/([^'"]+)\\1/g,
+                        /from\s+(['"])\.\/([^'"]+)\1/g,
                         function (match, quote, path) {
                             return 'from "' + ffmpegPackageURL + '/' + path + '"';
                         }
