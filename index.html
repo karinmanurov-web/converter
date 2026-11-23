@@ -112,7 +112,7 @@
         let loadingPromise = null;
         let isLoaded = false;
 
-        const coreBaseURL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/umd';
+        const coreBaseURL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/esm';
         const ffmpegPackageURL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/esm';
         let classWorkerBlobURL = null;
 
@@ -157,13 +157,13 @@
                     );
                 }
 
-                // Import the core from its original HTTPS URL. Blob-wrapping the core can
-                // cause dynamic import failures inside FFmpeg's worker on some browsers.
+                // The ESM core exposes the default factory expected by the FFmpeg worker.
+                // Blob URLs bypass CDN CORS restrictions during dynamic import.
                 setStatus('Загрузка JavaScript-ядра FFmpeg...');
-                const coreURL = coreBaseURL + '/ffmpeg-core.js';
+                const coreURL = await toBlobURL(coreBaseURL + '/ffmpeg-core.js', 'text/javascript');
 
                 setStatus('Загрузка WebAssembly-ядра FFmpeg (~32 МБ)...');
-                const wasmURL = coreBaseURL + '/ffmpeg-core.wasm';
+                const wasmURL = await toBlobURL(coreBaseURL + '/ffmpeg-core.wasm', 'application/wasm');
 
                 setStatus('Запуск FFmpeg...');
                 await ffmpeg.load({ classWorkerURL: classWorkerBlobURL, coreURL, wasmURL });
