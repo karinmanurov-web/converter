@@ -98,101 +98,7 @@
     <script type="module">
         import { FFmpeg } from 'https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/esm/index.js';
         import { fetchFile, toBlobURL } from 'https://cdn.jsdelivr.net/npm/@ffmpeg/util@0.12.2/dist/esm/index.js';
-        // ... (ваши импорты и получения элементов DOM остаются без изменений)
 
-        // 1. Создаём объект FFmpeg СРАЗУ, на верхнем уровне скрипта
-        let ffmpeg = new FFmpeg();
-        let selectedFile = null;
-        let isLoaded = false; // Флаг, чтобы не загружать ядро дважды
-        
-        fileInput.addEventListener('change', (e) => {
-            const file = e.target.files[0];
-            if (file) {
-                selectedFile = file;
-                fileName.textContent = file.name;
-                dropZone.classList.add('has-file');
-                convertBtn.disabled = false;
-                status.textContent = `Готов к конвертации (${(file.size / 1024 / 1024).toFixed(2)} МБ)`;
-            }
-        });
-        
-        // 2. Функция загрузки ядра (без создания объекта ffmpeg)
-        async function loadFFmpegCore() {
-            if (isLoaded) return; // Если уже загружено, выходим
-            
-            status.textContent = 'Загрузка FFmpeg (может занять время)...';
-            
-            ffmpeg.on('progress', ({ progress }) => {
-                const pct = Math.min(100, Math.max(0, progress * 100));
-                progressFill.style.width = pct + '%';
-                status.textContent = `Конвертация... ${pct.toFixed(1)}%`;
-            });
-        
-            const baseURL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/umd';
-            
-            // Загружаем ядро
-            await ffmpeg.load({
-                coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
-                wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
-            });
-            
-            isLoaded = true; // Отмечаем, что ядро загружено
-        }
-        
-        convertBtn.addEventListener('click', async () => {
-            if (!selectedFile) return;
-        
-            convertBtn.disabled = true;
-            progressBar.style.display = 'block';
-            progressFill.style.width = '0%';
-        
-            try {
-                // 3. Вызываем функцию загрузки ядра
-                await loadFFmpegCore();
-        
-                status.textContent = 'Чтение файла...';
-                const inputName = 'input.webm';
-                const outputName = 'output.mp4';
-        
-                await ffmpeg.writeFile(inputName, await fetchFile(selectedFile));
-        
-                status.textContent = 'Конвертация...';
-                await ffmpeg.exec([
-                    '-i', inputName,
-                    '-c:v', 'libx264',
-                    '-preset', 'ultrafast',
-                    '-crf', '23',
-                    '-c:a', 'aac',
-                    '-b:a', '128k',
-                    outputName
-                ]);
-        
-                status.textContent = 'Сохранение...';
-                const data = await ffmpeg.readFile(outputName);
-                const blob = new Blob([data.buffer], { type: 'video/mp4' });
-        
-                const baseName = selectedFile.name.replace(/\.webm$/i, '');
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = baseName + '.mp4';
-                document.body.appendChild(a);
-                a.click();
-                document.body.removeChild(a);
-                URL.revokeObjectURL(url);
-        
-                await ffmpeg.deleteFile(inputName);
-                await ffmpeg.deleteFile(outputName);
-        
-                status.textContent = '✅ Готово! Файл скачан.';
-                progressFill.style.width = '100%';
-            } catch (err) {
-                console.error(err);
-                status.textContent = '❌ Ошибка: ' + (err.message || err);
-            } finally {
-                convertBtn.disabled = false;
-            }
-        });
         const fileInput = document.getElementById('fileInput');
         const dropZone = document.getElementById('dropZone');
         const fileName = document.getElementById('fileName');
@@ -203,100 +109,124 @@
 
         let selectedFile = null;
         let ffmpeg = null;
+        let loadingPromise = null;
+        let isLoaded = false;
 
-        fileInput.addEventListener('change', (e) => {
-            const file = e.target.files[0];
-            if (file) {
-                selectedFile = file;
-                fileName.textContent = file.name;
-                dropZone.classList.add('has-file');
-                convertBtn.disabled = false;
-                status.textContent = `Готов к конвертации (${(file.size / 1024 / 1024).toFixed(2)} МБ)`;
-            }
-        });
+        const coreBaseURL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/umd';
+
+        function setStatus(message) {
+            status.textContent = message;
+        }
+
+        function setProgress(progress) {
+            const percent = Math.min(100, Math.max(0, progress * 100));
+            progressFill.style.width = percent + '%';
+        }
 
         async function loadFFmpeg() {
-            await ffmpeg.load({
-                coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
-                wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
-                workerURL: await toBlobURL(`${baseURL}/ffmpeg-core.worker.js`, 'text/javascript') // ← добавьте это
-        });
-            if (ffmpeg) return ffmpeg;
-            status.textContent = 'Загрузка FFmpeg (может занять время)...';
-            
-            ffmpeg = new FFmpeg();
-            
-            // Слушаем прогресс
-            ffmpeg.on('progress', ({ progress }) => {
-                const pct = Math.min(100, Math.max(0, progress * 100));
-                progressFill.style.width = pct + '%';
-                status.textContent = `Конвертация... ${pct.toFixed(1)}%`;
-            });
+            if (isLoaded) return;
+            if (loadingPromise) return loadingPromise;
 
-            // Официально рекомендуемый способ загрузки ядра (core) из CDN
-            const baseURL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/umd';
-            
-            await ffmpeg.load({
-                coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
-                wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
-            });
-            
-            return ffmpeg;
+            loadingPromise = (async () => {
+                setStatus('Загрузка FFmpeg (может занять время)...');
+                ffmpeg = new FFmpeg();
+
+                ffmpeg.on('progress', ({ progress }) => {
+                    setProgress(progress);
+                    setStatus('Конвертация... ' + (progress * 100).toFixed(1) + '%');
+                });
+
+                const coreURL = await toBlobURL(coreBaseURL + '/ffmpeg-core.js', 'text/javascript');
+                const wasmURL = await toBlobURL(coreBaseURL + '/ffmpeg-core.wasm', 'application/wasm');
+
+                await ffmpeg.load({ coreURL, wasmURL });
+                isLoaded = true;
+            })();
+
+            try {
+                await loadingPromise;
+            } catch (error) {
+                loadingPromise = null;
+                ffmpeg = null;
+                throw error;
+            }
         }
+
+        fileInput.addEventListener('change', (event) => {
+            const file = event.target.files && event.target.files[0];
+            if (!file) return;
+
+            if (!file.name.toLowerCase().endsWith('.webm') && file.type !== 'video/webm') {
+                selectedFile = null;
+                convertBtn.disabled = true;
+                setStatus('Пожалуйста, выберите файл WebM.');
+                return;
+            }
+
+            selectedFile = file;
+            fileName.textContent = file.name;
+            dropZone.classList.add('has-file');
+            convertBtn.disabled = false;
+            setStatus('Готов к конвертации (' + (file.size / 1024 / 1024).toFixed(2) + ' МБ)');
+        });
 
         convertBtn.addEventListener('click', async () => {
             if (!selectedFile) return;
 
             convertBtn.disabled = true;
+            fileInput.disabled = true;
             progressBar.style.display = 'block';
-            progressFill.style.width = '0%';
+            setProgress(0);
+
+            const inputName = 'input.webm';
+            const outputName = 'output.mp4';
 
             try {
                 await loadFFmpeg();
 
-                status.textContent = 'Чтение файла...';
-                const inputName = 'input.webm';
-                const outputName = 'output.mp4';
-
+                setStatus('Чтение файла...');
                 await ffmpeg.writeFile(inputName, await fetchFile(selectedFile));
 
-                status.textContent = 'Конвертация...';
-                // Простые параметры для совместимости
-                await ffmpeg.exec([
+                setStatus('Конвертация...');
+                const exitCode = await ffmpeg.exec([
                     '-i', inputName,
                     '-c:v', 'libx264',
-                    '-preset', 'ultrafast', // ultrafast для скорости, можно заменить на fast
+                    '-preset', 'ultrafast',
                     '-crf', '23',
                     '-c:a', 'aac',
                     '-b:a', '128k',
+                    '-movflags', '+faststart',
                     outputName
                 ]);
 
-                status.textContent = 'Сохранение...';
+                if (exitCode !== 0) {
+                    throw new Error('FFmpeg завершил конвертацию с кодом ' + exitCode);
+                }
+
+                setStatus('Подготовка MP4...');
                 const data = await ffmpeg.readFile(outputName);
-                const blob = new Blob([data.buffer], { type: 'video/mp4' });
+                const blob = new Blob([data], { type: 'video/mp4' });
+                const downloadURL = URL.createObjectURL(blob);
+                const link = document.createElement('a');
+                link.href = downloadURL;
+                link.download = selectedFile.name.replace(/\.webm$/i, '') + '.mp4';
+                document.body.appendChild(link);
+                link.click();
+                link.remove();
+                setTimeout(() => URL.revokeObjectURL(downloadURL), 1500);
 
-                const baseName = selectedFile.name.replace(/\.webm$/i, '');
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = baseName + '.mp4';
-                document.body.appendChild(a);
-                a.click();
-                document.body.removeChild(a);
-                URL.revokeObjectURL(url);
-
-                // Очистка виртуальной файловой системы
-                await ffmpeg.deleteFile(inputName);
-                await ffmpeg.deleteFile(outputName);
-
-                status.textContent = '✅ Готово! Файл скачан.';
-                progressFill.style.width = '100%';
-            } catch (err) {
-                console.error(err);
-                status.textContent = '❌ Ошибка: ' + (err.message || err);
+                setProgress(1);
+                setStatus('Готово! MP4 скачивается.');
+            } catch (error) {
+                console.error('WebM → MP4 conversion failed:', error);
+                setStatus('Ошибка: ' + (error && error.message ? error.message : String(error)));
             } finally {
-                convertBtn.disabled = false;
+                if (ffmpeg && isLoaded) {
+                    try { await ffmpeg.deleteFile(inputName); } catch (_) {}
+                    try { await ffmpeg.deleteFile(outputName); } catch (_) {}
+                }
+                convertBtn.disabled = !selectedFile;
+                fileInput.disabled = false;
             }
         });
     </script>
