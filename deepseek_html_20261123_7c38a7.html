@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebM → MP4 Конвертер (Fix)</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: #1a1a1a;
+            color: #eee;
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+        .container {
+            background: #2a2a2a;
+            padding: 40px;
+            border-radius: 16px;
+            width: 100%;
+            max-width: 450px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+            text-align: center;
+        }
+        h1 { margin-bottom: 24px; font-size: 22px; font-weight: 600; }
+        .file-input-wrapper {
+            display: block;
+            padding: 30px 20px;
+            border: 2px dashed #555;
+            border-radius: 10px;
+            cursor: pointer;
+            transition: 0.2s;
+            margin-bottom: 20px;
+            background: #222;
+        }
+        .file-input-wrapper:hover { border-color: #4a9eff; background: #262626; }
+        .file-input-wrapper.has-file { border-color: #4a9eff; border-style: solid; }
+        input[type="file"] { display: none; }
+        .file-name { font-size: 13px; color: #aaa; word-break: break-all; margin-top: 8px; }
+        .icon { font-size: 36px; margin-bottom: 10px; }
+        button {
+            width: 100%;
+            padding: 14px;
+            font-size: 16px;
+            font-weight: 600;
+            border: none;
+            border-radius: 10px;
+            background: #4a9eff;
+            color: white;
+            cursor: pointer;
+            transition: 0.2s;
+        }
+        button:hover:not(:disabled) { background: #3a8eef; }
+        button:disabled { background: #444; cursor: not-allowed; opacity: 0.6; }
+        .status {
+            margin-top: 16px;
+            font-size: 13px;
+            color: #aaa;
+            min-height: 20px;
+        }
+        .progress-bar {
+            width: 100%;
+            height: 6px;
+            background: #333;
+            border-radius: 3px;
+            margin-top: 12px;
+            overflow: hidden;
+            display: none;
+        }
+        .progress-fill {
+            height: 100%;
+            width: 0%;
+            background: #4a9eff;
+            transition: width 0.2s;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎬 WebM → MP4</h1>
+        <label class="file-input-wrapper" id="dropZone">
+            <div class="icon">📁</div>
+            <div>Выберите WebM файл</div>
+            <div class="file-name" id="fileName"></div>
+            <input type="file" id="fileInput" accept=".webm,video/webm">
+        </label>
+        <button id="convertBtn" disabled>Экспорт в MP4</button>
+        <div class="progress-bar" id="progressBar">
+            <div class="progress-fill" id="progressFill"></div>
+        </div>
+        <div class="status" id="status"></div>
+    </div>
+
+    <!-- Используем ES-модули, это более надёжный способ для современных браузеров -->
+    <script type="module">
+        import { FFmpeg } from 'https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/esm/index.js';
+        import { fetchFile, toBlobURL } from 'https://cdn.jsdelivr.net/npm/@ffmpeg/util@0.12.2/dist/esm/index.js';
+
+        const fileInput = document.getElementById('fileInput');
+        const dropZone = document.getElementById('dropZone');
+        const fileName = document.getElementById('fileName');
+        const convertBtn = document.getElementById('convertBtn');
+        const status = document.getElementById('status');
+        const progressBar = document.getElementById('progressBar');
+        const progressFill = document.getElementById('progressFill');
+
+        let selectedFile = null;
+        let ffmpeg = null;
+
+        fileInput.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (file) {
+                selectedFile = file;
+                fileName.textContent = file.name;
+                dropZone.classList.add('has-file');
+                convertBtn.disabled = false;
+                status.textContent = `Готов к конвертации (${(file.size / 1024 / 1024).toFixed(2)} МБ)`;
+            }
+        });
+
+        async function loadFFmpeg() {
+            if (ffmpeg) return ffmpeg;
+            status.textContent = 'Загрузка FFmpeg (может занять время)...';
+            
+            ffmpeg = new FFmpeg();
+            
+            // Слушаем прогресс
+            ffmpeg.on('progress', ({ progress }) => {
+                const pct = Math.min(100, Math.max(0, progress * 100));
+                progressFill.style.width = pct + '%';
+                status.textContent = `Конвертация... ${pct.toFixed(1)}%`;
+            });
+
+            // Официально рекомендуемый способ загрузки ядра (core) из CDN
+            const baseURL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/umd';
+            
+            await ffmpeg.load({
+                coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
+                wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
+            });
+            
+            return ffmpeg;
+        }
+
+        convertBtn.addEventListener('click', async () => {
+            if (!selectedFile) return;
+
+            convertBtn.disabled = true;
+            progressBar.style.display = 'block';
+            progressFill.style.width = '0%';
+
+            try {
+                await loadFFmpeg();
+
+                status.textContent = 'Чтение файла...';
+                const inputName = 'input.webm';
+                const outputName = 'output.mp4';
+
+                await ffmpeg.writeFile(inputName, await fetchFile(selectedFile));
+
+                status.textContent = 'Конвертация...';
+                // Простые параметры для совместимости
+                await ffmpeg.exec([
+                    '-i', inputName,
+                    '-c:v', 'libx264',
+                    '-preset', 'ultrafast', // ultrafast для скорости, можно заменить на fast
+                    '-crf', '23',
+                    '-c:a', 'aac',
+                    '-b:a', '128k',
+                    outputName
+                ]);
+
+                status.textContent = 'Сохранение...';
+                const data = await ffmpeg.readFile(outputName);
+                const blob = new Blob([data.buffer], { type: 'video/mp4' });
+
+                const baseName = selectedFile.name.replace(/\.webm$/i, '');
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = baseName + '.mp4';
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+
+                // Очистка виртуальной файловой системы
+                await ffmpeg.deleteFile(inputName);
+                await ffmpeg.deleteFile(outputName);
+
+                status.textContent = '✅ Готово! Файл скачан.';
+                progressFill.style.width = '100%';
+            } catch (err) {
+                console.error(err);
+                status.textContent = '❌ Ошибка: ' + (err.message || err);
+            } finally {
+                convertBtn.disabled = false;
+            }
+        });
+    </script>
+</body>
+</html>
